@@ -18,37 +18,45 @@ namespace RinaUtilityAI.Editor {
 		}
 
 		private void OnEnable() {
-			// ツールバー（上部メニュー）の作成
-			var toolbar = new Toolbar();
+			rootVisualElement.Clear();
+			rootVisualElement.style.flexDirection = FlexDirection.Column;
+			rootVisualElement.style.flexGrow = 1;
 
-			// 1. ルートアセット選択用の窓
+			var toolbar = new Toolbar();
+			toolbar.style.flexShrink = 0;
+
 			_rootCategoryObjectField = new ObjectField("Root Category") {
 				objectType = typeof(BehaviourCategory),
 				allowSceneObjects = false
 			};
-			// アセットが変更されたら自動ロード
 			_rootCategoryObjectField.RegisterValueChangedCallback(evt => {
-				_graphView.LoadGraph(evt.newValue as BehaviourCategory);
+				if (_graphView != null) {
+					_graphView.LoadGraph(evt.newValue as BehaviourCategory);
+				}
 			});
 			toolbar.Add(_rootCategoryObjectField);
 
-			// 2. ロードボタン
 			var loadButton = new Button(() => {
-				_graphView.LoadGraph(_rootCategoryObjectField.value as BehaviourCategory);
+				if (_graphView != null) {
+					_graphView.LoadGraph(_rootCategoryObjectField.value as BehaviourCategory);
+				}
 			}) { text = "Load" };
 			toolbar.Add(loadButton);
 
-			// 3. セーブボタン
 			var saveButton = new Button(() => {
-				_graphView.SaveGraph();
+				if (_graphView != null) {
+					_graphView.SaveGraph();
+				}
 			}) { text = "Save" };
 			toolbar.Add(saveButton);
 
 			rootVisualElement.Add(toolbar);
 
-			// グラフ本体の追加
+			if (_graphView != null) {
+				rootVisualElement.Remove(_graphView);
+			}
 			_graphView = new UtilityGraphView();
-			_graphView.StretchToParentSize();
+			_graphView.style.flexGrow = 1;
 			rootVisualElement.Add(_graphView);
 		}
 	}

@@ -15,13 +15,33 @@ namespace RinaUtilityAI.Behaviour {
 
 	public interface IUtilityBehaviourInstance : IUtilityNodeInstance, IEquatable<IUtilityBehaviourInstance> {
 
-		IUtilityBehaviour Definition { get; }
+		new IUtilityBehaviour Definition { get; }
 
 		bool IsActive { get; }
 
 		bool IsInterruptible { get; }
 
 		bool IEquatable<IUtilityBehaviourInstance>.Equals(IUtilityBehaviourInstance other) => other != null && Definition.Equals(other.Definition);
+
+	}
+
+	public abstract class AUtilityBehaviour : AUtilityNode {
+
+		public abstract int InterruptionPriority { get; }
+
+		public abstract UniTask ExecuteBehaviour_Async(CancellationToken token, IUtilityBehaviourInstance instance);
+
+	}
+
+	public abstract class AUtilityBehaviourInstance : AUtilityNodeInstance, IUtilityBehaviourInstance {
+
+		protected AUtilityBehaviourInstance(AUtilityNode definition) : base(definition) {  }
+
+		public abstract bool IsActive { get; }
+
+		public abstract bool IsInterruptible { get; }
+
+		public new IUtilityBehaviour Definition => (IUtilityBehaviour)base.Definition;
 
 	}
 

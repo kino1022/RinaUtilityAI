@@ -6,7 +6,6 @@ using RinaUtilityAI.Logic;
 using Sirenix.OdinInspector;
 using Sirenix.Serialization;
 using UnityEngine;
-using VContainer;
 
 namespace RinaUtilityAI.Interface {
 	/// <summary>
@@ -42,6 +41,7 @@ namespace RinaUtilityAI.Interface {
 
 		public virtual IReadOnlyList<APrioritizationLogic> PrioritizationLogics => prioritizationLogics;
 
+
 		public virtual PrioritizationScore Evaluate(IUtilityNodeInstance nodeInstance) {
 			if (nodeInstance == null) {
 				return new PrioritizationScore();
@@ -74,13 +74,13 @@ namespace RinaUtilityAI.Interface {
 		[OdinSerialize]
 		[LabelText("評価ロジックのインスタンス")]
 		[ReadOnly]
-		protected List<IPrioritizationLogicInstance> evaluateLogics = new();
+		private List<IPrioritizationLogicInstance> _evaluateLogics = new();
 
 		[SerializeField]
 		[ReadOnly]
-		protected bool isInitialized = false;
+		private bool isInitialized;
 
-		public virtual IReadOnlyList<IPrioritizationLogicInstance> EvaluateLogics => evaluateLogics;
+		public virtual IReadOnlyList<IPrioritizationLogicInstance> EvaluateLogics => _evaluateLogics;
 
 		public virtual IUtilityNode Definition => definition;
 
@@ -88,7 +88,9 @@ namespace RinaUtilityAI.Interface {
 
 		[SerializeField]
 		[ReadOnly]
-		protected UtilityOwnerReference ownerRef;
+		private UtilityOwnerReference ownerRef;
+
+		protected UtilityOwnerReference OwnerRef => ownerRef;
 
 		protected AUtilityNodeInstance(AUtilityNode definition) {
 			Assert.IsNotNull(definition);
@@ -96,9 +98,9 @@ namespace RinaUtilityAI.Interface {
 			CreateLogicInstances();
 		}
 
-		public void Initialize(UtilityOwnerReference ownerRef) {
-			Assert.IsNotNull(ownerRef);
-			this.ownerRef = ownerRef;
+		public void Initialize(UtilityOwnerReference ownerReference) {
+			Assert.IsNotNull(ownerReference);
+			ownerRef = ownerReference;
 			InitializeLogicInstances();
 			OnPostInitialize();
 			isInitialized = true;
@@ -108,12 +110,12 @@ namespace RinaUtilityAI.Interface {
 
 		protected void CreateLogicInstances() {
 			Assert.IsNotNull(definition);
-			evaluateLogics.Clear();
+			_evaluateLogics.Clear();
 			if (definition.PrioritizationLogics.Count != 0) {
 				foreach (var logic in definition.PrioritizationLogics) {
 					if (logic != null) {
 						var instance  = logic.CreateInstance();
-						evaluateLogics.Add(instance);
+						_evaluateLogics.Add(instance);
 					}
 				}
 			}

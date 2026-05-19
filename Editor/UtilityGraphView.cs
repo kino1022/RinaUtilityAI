@@ -1,17 +1,18 @@
 using System.Collections.Generic;
-using System.Linq;
+using System.IO;
 using UnityEditor;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 using UnityEngine.UIElements;
-using RinaUtilityAI.Category; // BehaviourCategoryのネームスペース
+using RinaUtilityAI.Category;
 using RinaUtilityAI.Interface;
 
 namespace RinaUtilityAI.Editor {
     public class UtilityGraphView : GraphView {
 
-        // 画面上の全ノードを管理する辞書（実データのインスタンスID -> View）
-        private Dictionary<int, UtilityNodeView> _nodeViewMap = new();
+        private readonly Dictionary<AUtilityNode, UtilityNodeView> _nodeViewMap = new();
+        private readonly GridBackground _gridBackground;
+        private readonly GraphEdgeConnectorListener _edgeConnectorListener;
 
         public UtilityGraphView() {
             SetupZoom(ContentZoomer.DefaultMinScale, ContentZoomer.DefaultMaxScale);
@@ -19,86 +20,84 @@ namespace RinaUtilityAI.Editor {
             this.AddManipulator(new SelectionDragger());
             this.AddManipulator(new RectangleSelector());
 
-            var grid = new GridBackground();
-            Insert(0, grid);
-            grid.StretchToParentSize();
+            _edgeConnectorListener = new GraphEdgeConnectorListener(this);
+
+            _gridBackground = new GridBackground();
+            Insert(0, _gridBackground);
+            _gridBackground.StretchToParentSize();
+
+            style.flexGrow = 1;
         }
 
-        // ★★★ 【ロード処理】 ScriptableObjectのツリー構造からグラフを生成 ★★★
         public void LoadGraph(BehaviourCategory rootCategory) {
-            // 一旦画面をクリア
-            DeleteElements(graphElements);
+            _rootCategory = rootCategory;
+            var elementsToRemove = new List<GraphElement>();
+            foreach (var element in graphElements) {
+                elementsToRemove.Add(element);
+            }
+            DeleteElements(elementsToRemove);
+            Insert(0, _gridBackground);
+            _gridBackground.StretchToParentSize();
             _nodeViewMap.Clear();
 
             if (rootCategory == null) return;
 
-            // 1. ノードの再帰的生成
             GenerateNodesRecursive(rootCategory, new Vector2(100, 200));
 
-            // 2. エッジ（線）の再帰的接続
             ConnectEdgesRecursive(rootCategory);
         }
 
+        private BehaviourCategory _rootCategory;
+
         private void GenerateNodesRecursive(AUtilityNode node, Vector2 position) {
-            if (node == null || _nodeViewMap.ContainsKey(node.GetInstanceID())) return;
+            if (node == null || _nodeViewMap.ContainsKey(node)) return;
 
-            var nodeView = UtilityNodeView.CreateNode(node, position);
+            var nodeView = UtilityNodeView.CreateNode(node, position, _edgeConnectorListener);
             AddElement(nodeView);
-            _nodeViewMap[node.GetInstanceID()] = nodeView;
+            _nodeViewMap[node] = nodeView;
 
-            // カテゴリ（枝）だった場合は、その子ノードも再帰的に生成
-            if (node is BehaviourCategory category) {
+            if (node is IBehaviourCategory category && category.ChildNodes != null && category.ChildNodes.Count > 0) {
                 float childY = position.y - (category.ChildNodes.Count * 60f) / 2f;
                 foreach (var child in category.ChildNodes) {
-                    if (child == null) continue;
-                    // 横にずらして配置
-                    GenerateNodesRecursive(child as AUtilityNode, new Vector2(position.x + 250f, childY));
+                    if (child is not AUtilityNode childNode) continue;
+                    GenerateNodesRecursive(childNode, new Vector2(position.x + 250f, childY));
                     childY += 120f;
                 }
             }
         }
 
         private void ConnectEdgesRecursive(AUtilityNode node) {
-            if (node == null || node is not BehaviourCategory category) return;
+            if (node == null) return;
 
-            if (_nodeViewMap.TryGetValue(node.GetInstanceID(), out var parentView)) {
+            if (node is not IBehaviourCategory category) return;
+
+            if (_nodeViewMap.TryGetValue(node, out var parentView) && parentView.OutputPort != null) {
                 foreach (var child in category.ChildNodes) {
-                    if (child == null) continue;
-                    if (_nodeViewMap.TryGetValue((child as AUtilityNode).GetInstanceID(), out var childView)) {
-                        // 線（Edge）を作って繋ぐ
+                    if (child is not AUtilityNode childNode) continue;
+                    if (_nodeViewMap.TryGetValue(childNode, out var childView)) {
                         var edge = parentView.OutputPort.ConnectTo(childView.InputPort);
                         AddElement(edge);
                     }
-                    // 子ノードのその先へ
-                    ConnectEdgesRecursive(child as AUtilityNode);
+                    ConnectEdgesRecursive(childNode);
                 }
             }
         }
 
-        // ★★★ 【セーブ処理】 画面上の接続からScriptableObjectのListを更新 ★★★
         public void SaveGraph() {
-            // 画面上のすべてのノードViewをループ
             foreach (var kvp in _nodeViewMap) {
                 var parentView = kvp.Value;
 
-                // もしこのノードがカテゴリ（枝）なら、接続されている子ノードのリストを再構築する
-                if (parentView.TargetNode is BehaviourCategory parentCategory) {
+                if (parentView.TargetNode is BehaviourCategory parentNode && parentView.OutputPort != null) {
+                  Undo.RecordObject(parentNode, "Update Utility AI Connections");
 
-                    // 変更前にUndoできるように記録
-                    Undo.RecordObject(parentCategory, "Update Utility AI Connections");
-
-                    // リフレクションやシリアライズのために一度リストをクリア
-                    // 実装した BehaviourCategory の childNodes フィールドにアクセス
-                    var serializedObj = new SerializedObject(parentCategory);
+                    var serializedObj = new SerializedObject(parentNode);
                     var childNodesProperty = serializedObj.FindProperty("childNodes");
                     childNodesProperty.ClearArray();
 
-                    // 出力ポートに繋がっているすべての線をスキャン
                     var connections = parentView.OutputPort.connections;
                     int index = 0;
                     foreach (var edge in connections) {
                         if (edge.input.node is UtilityNodeView childView) {
-                            // 繋がっている子の実データ（SO）をリストに追加
                             childNodesProperty.InsertArrayElementAtIndex(index);
                             childNodesProperty.GetArrayElementAtIndex(index).objectReferenceValue = childView.TargetNode;
                             index++;
@@ -106,12 +105,125 @@ namespace RinaUtilityAI.Editor {
                     }
 
                     serializedObj.ApplyModifiedProperties();
-                    EditorUtility.SetDirty(parentCategory); // 変更を通知
+                    EditorUtility.SetDirty(parentNode);
                 }
             }
 
-            AssetDatabase.SaveAssets(); // ディスクに保存
+            AssetDatabase.SaveAssets();
             Debug.Log("<color=green>【Utility AI】 グラフの保存が完了しました！</color>");
+        }
+
+        public void CreateChildCategory(BehaviourCategory parentCategory) {
+            if (parentCategory == null) return;
+
+            var childCategory = ScriptableObject.CreateInstance<BehaviourCategory>();
+            childCategory.name = "New BehaviourCategory";
+
+            var parentPath = AssetDatabase.GetAssetPath(parentCategory);
+            var folderPath = string.IsNullOrEmpty(parentPath) ? "Assets" : Path.GetDirectoryName(parentPath);
+            if (string.IsNullOrEmpty(folderPath)) {
+                folderPath = "Assets";
+            }
+
+            var assetPath = AssetDatabase.GenerateUniqueAssetPath(Path.Combine(folderPath, childCategory.name + ".asset"));
+
+            Undo.RegisterCreatedObjectUndo(childCategory, "Create BehaviourCategory");
+            AssetDatabase.CreateAsset(childCategory, assetPath);
+            AssetDatabase.SaveAssets();
+
+            var serializedObj = new SerializedObject(parentCategory);
+            var childNodesProperty = serializedObj.FindProperty("childNodes");
+            var index = childNodesProperty.arraySize;
+            childNodesProperty.InsertArrayElementAtIndex(index);
+            childNodesProperty.GetArrayElementAtIndex(index).objectReferenceValue = childCategory;
+            serializedObj.ApplyModifiedProperties();
+            EditorUtility.SetDirty(parentCategory);
+
+            LoadGraph(_rootCategory ?? parentCategory);
+            Selection.activeObject = childCategory;
+        }
+
+        public void BeginPickExistingChildNode(BehaviourCategory parentCategory) {
+            ShowExistingNodeSelectionMenu(parentCategory, Vector2.zero);
+        }
+
+        public void AddExistingChildNode(BehaviourCategory parentCategory, AUtilityNode childNode) {
+            if (parentCategory == null || childNode == null) return;
+
+            var serializedObj = new SerializedObject(parentCategory);
+            var childNodesProperty = serializedObj.FindProperty("childNodes");
+
+            for (var i = 0; i < childNodesProperty.arraySize; i++) {
+                if (childNodesProperty.GetArrayElementAtIndex(i).objectReferenceValue == childNode) {
+                    LoadGraph(_rootCategory ?? parentCategory);
+                    Selection.activeObject = childNode;
+                    return;
+                }
+            }
+
+            Undo.RecordObject(parentCategory, "Add Existing Child Node");
+            var index = childNodesProperty.arraySize;
+            childNodesProperty.InsertArrayElementAtIndex(index);
+            childNodesProperty.GetArrayElementAtIndex(index).objectReferenceValue = childNode;
+            serializedObj.ApplyModifiedProperties();
+            EditorUtility.SetDirty(parentCategory);
+
+            LoadGraph(_rootCategory ?? parentCategory);
+            Selection.activeObject = childNode;
+        }
+
+        public void ShowAddChildMenu(BehaviourCategory parentCategory, Vector2 position) {
+            if (parentCategory == null) return;
+
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("Add Existing AUtilityNode..."), false, () => ShowExistingNodeSelectionMenu(parentCategory, position));
+            menu.AddItem(new GUIContent("Create New Category"), false, () => CreateChildCategory(parentCategory));
+            menu.DropDown(new Rect(position, Vector2.zero));
+        }
+
+        private void ShowExistingNodeSelectionMenu(BehaviourCategory parentCategory, Vector2 position) {
+            if (parentCategory == null) return;
+
+            var menu = new GenericMenu();
+            var assetGuids = AssetDatabase.FindAssets("t:AUtilityNode");
+            var hasAnyItem = false;
+
+            foreach (var guid in assetGuids) {
+                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                var node = AssetDatabase.LoadAssetAtPath<AUtilityNode>(assetPath);
+                if (node == null || node == parentCategory) {
+                    continue;
+                }
+
+                hasAnyItem = true;
+                var label = string.IsNullOrEmpty(node.name) ? node.GetType().Name : node.name;
+                menu.AddItem(new GUIContent(label), false, () => AddExistingChildNode(parentCategory, node));
+            }
+
+            if (!hasAnyItem) {
+                menu.AddDisabledItem(new GUIContent("No AUtilityNode assets found"));
+            }
+
+            menu.DropDown(new Rect(position, Vector2.zero));
+        }
+
+        private BehaviourCategory GetSelectedCategoryOrRoot() {
+            foreach (var selectable in selection) {
+                if (selectable is UtilityNodeView nodeView && nodeView.TargetNode is BehaviourCategory category) {
+                    return category;
+                }
+            }
+            return _rootCategory;
+        }
+
+        public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
+            base.BuildContextualMenu(evt);
+
+            var targetCategory = GetSelectedCategoryOrRoot();
+            if (targetCategory != null) {
+                evt.menu.AppendAction("Add Existing AUtilityNode...", _ => ShowExistingNodeSelectionMenu(targetCategory, Vector2.zero));
+                evt.menu.AppendAction("Create New Category", _ => CreateChildCategory(targetCategory));
+            }
         }
 
         public override List<Port> GetCompatiblePorts(Port startPort, NodeAdapter nodeAdapter) {
@@ -122,6 +234,32 @@ namespace RinaUtilityAI.Editor {
                 }
             });
             return compatiblePorts;
+        }
+
+        private sealed class GraphEdgeConnectorListener : IEdgeConnectorListener {
+
+            private readonly UtilityGraphView _graphView;
+
+            public GraphEdgeConnectorListener(UtilityGraphView graphView) {
+                _graphView = graphView;
+            }
+
+            public void OnDropOutsidePort(Edge edge, Vector2 position) {
+                if (edge?.output?.node is not UtilityNodeView sourceNodeView) {
+                    return;
+                }
+
+                if (sourceNodeView.TargetNode is not BehaviourCategory parentCategory) {
+                    return;
+                }
+
+                _graphView.ShowAddChildMenu(parentCategory, position);
+            }
+
+            public void OnDrop(GraphView graphView, Edge edge) {
+                // 接続自体はGraphView側で保持されるため、
+                // データ同期はSaveGraph時にまとめて行う。
+            }
         }
     }
 }

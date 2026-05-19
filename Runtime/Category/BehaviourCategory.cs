@@ -28,6 +28,7 @@ namespace RinaUtilityAI.Category {
 	public class BehaviourCategory : AUtilityNode, IBehaviourCategory {
 
 		[SerializeField]
+		[LabelText("子ノード")]
 		protected List<AUtilityNode> childNodes = new();
 
 		public virtual IReadOnlyList<IUtilityNode> ChildNodes => childNodes;
@@ -67,16 +68,16 @@ namespace RinaUtilityAI.Category {
 		[OdinSerialize]
 		[ReadOnly]
 		[TitleGroup("Runtime Reference")]
-		protected IDefaultBehaviourHolder defaultBehaviour;
+		private IDefaultBehaviourHolder _defaultBehaviour;
 
 		[OdinSerialize]
 		[ReadOnly]
 		[TitleGroup("Runtime Reference")]
-		protected List<IUtilityNodeInstance> childNodeInstances = new();
+		private List<IUtilityNodeInstance> _childNodeInstances = new();
 
-		public IDefaultBehaviourHolder DefaultBehaviour => defaultBehaviour;
+		public IDefaultBehaviourHolder DefaultBehaviour => _defaultBehaviour;
 
-		public virtual IReadOnlyList<IUtilityNodeInstance> ChildNodeInstances => childNodeInstances;
+		public virtual IReadOnlyList<IUtilityNodeInstance> ChildNodeInstances => _childNodeInstances;
 
 		public BehaviourCategoryInstance(BehaviourCategory definition) : base(definition) {
 			InstanceChildNodes();
@@ -84,19 +85,19 @@ namespace RinaUtilityAI.Category {
 
 		protected override void OnPostInitialize() {
 			base.OnPostInitialize();
-			Assert.IsNotNull(ownerRef);
-			defaultBehaviour = ownerRef.Resolver.Resolve<IDefaultBehaviourHolder>();
+			Assert.IsNotNull(OwnerRef);
+			_defaultBehaviour = OwnerRef.Resolver.Resolve<IDefaultBehaviourHolder>();
 			InitializeChildNodeInstances();
 		}
 
 		protected virtual void InitializeChildNodeInstances() {
 			Assert.IsNotNull(definition);
-			if (childNodeInstances.Count == 0) {
+			if (_childNodeInstances.Count == 0) {
 				return;
 			}
-			foreach (var node in childNodeInstances) {
+			foreach (var node in _childNodeInstances) {
 				if (node != null && !node.IsInitialized) {
-					node.Initialize(ownerRef);
+					node.Initialize(OwnerRef);
 				}
 			}
 		}
@@ -110,7 +111,7 @@ namespace RinaUtilityAI.Category {
 				}
 				foreach (var node in category.ChildNodes) {
 					if (node != null) {
-						childNodeInstances.Add(node.CreateInstance());
+										_childNodeInstances.Add(node.CreateInstance());
 					}
 				}
 			} else {
