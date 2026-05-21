@@ -2,6 +2,8 @@ using System;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using RinaUtilityAI.Interface;
+using Sirenix.OdinInspector;
+using UnityEngine;
 
 namespace RinaUtilityAI.Behaviour {
 
@@ -19,7 +21,7 @@ namespace RinaUtilityAI.Behaviour {
 
 		bool IsActive { get; }
 
-		bool IsInterruptible { get; }
+		bool IsInterruptible { get; set; }
 
 		bool IEquatable<IUtilityBehaviourInstance>.Equals(IUtilityBehaviourInstance other) => other != null && Definition.Equals(other.Definition);
 
@@ -27,22 +29,43 @@ namespace RinaUtilityAI.Behaviour {
 
 	public abstract class AUtilityBehaviour : AUtilityNode, IUtilityBehaviour {
 
-		public abstract int InterruptionPriority { get; }
+		[SerializeField]
+		[LabelText("割込の優先度")]
+		protected int interruptionPriority = 0;
+
+		public virtual int InterruptionPriority => interruptionPriority;
 
 		public abstract UniTask ExecuteBehaviour_Async(CancellationToken token, IUtilityBehaviourInstance instance);
 
 	}
 
+	[Serializable]
 	public abstract class AUtilityBehaviourInstance : AUtilityNodeInstance, IUtilityBehaviourInstance {
 
-		protected AUtilityBehaviourInstance(AUtilityNode definition) : base(definition) {  }
+		[SerializeField]
+		[ReadOnly]
+		protected new AUtilityBehaviour definition;
 
-		public abstract bool IsActive { get; }
+		[SerializeField]
+		[LabelText("行動がアクティブであるかどうか")]
+		protected bool isActive = false;
 
-		public abstract bool IsInterruptible { get; }
+		public virtual bool IsActive => isActive;
 
-		public new IUtilityBehaviour Definition => (IUtilityBehaviour)base.Definition;
+		[SerializeField]
+		[LabelText("割り込まれることを許容するかどうか")]
+		private bool isInterruptible = false;
 
+		public bool IsInterruptible {
+			get => isInterruptible;
+			set => isInterruptible = value;
+		}
+
+		public IUtilityBehaviour Definition => definition;
+
+		protected AUtilityBehaviourInstance(AUtilityBehaviour definition) : base(definition) {
+			this.definition = definition;
+		}
 	}
 
 }
