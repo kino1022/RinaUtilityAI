@@ -1,63 +1,113 @@
+using RinaUtilityAI.Category;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
-using RinaUtilityAI.Category;
 
 namespace RinaUtilityAI.Editor {
-	public class UtilityGraphWindow : EditorWindow {
+	public sealed class UtilityGraphWindow : EditorWindow {
 
-		private UtilityGraphView _graphView;
-
-		private ObjectField _rootCategoryObjectField;
+		private UtilityGraphView graphView;
+		private ObjectField rootObjectField;
+		private Label statusLabel;
 
 		[MenuItem("Window/Rina Utility AI/Graph Editor")]
 		public static void OpenWindow() {
 			var window = GetWindow<UtilityGraphWindow>("Utility AI Graph");
-			window.minSize = new Vector2(800, 600);
+			window.minSize = new Vector2(900f, 620f);
+		}
+
+		[MenuItem("Assets/Rina Utility AI/Open Graph", true)]
+		private static bool ValidateOpenFromAssets() {
+			return Selection.activeObject is BehaviourCategory;
+		}
+
+		[MenuItem("Assets/Rina Utility AI/Open Graph")]
+		private static void OpenFromAssets() {
+			var window = GetWindow<UtilityGraphWindow>("Utility AI Graph");
+			window.SetRootObject(Selection.activeObject);
+		}
+
+		[MenuItem("CONTEXT/PrioritizationMachine/Open Utility AI Graph")]
+		private static void OpenFromPrioritizationMachine(MenuCommand command) {
+			var window = GetWindow<UtilityGraphWindow>("Utility AI Graph");
+			window.SetRootObject(command.context);
 		}
 
 		private void OnEnable() {
+			Build();
+		}
+
+		private void Build() {
 			rootVisualElement.Clear();
 			rootVisualElement.style.flexDirection = FlexDirection.Column;
-			rootVisualElement.style.flexGrow = 1;
+			rootVisualElement.style.flexGrow = 1f;
 
 			var toolbar = new Toolbar();
-			toolbar.style.flexShrink = 0;
+			toolbar.style.flexShrink = 0f;
 
-			_rootCategoryObjectField = new ObjectField("Root Category") {
-				objectType = typeof(BehaviourCategory),
-				allowSceneObjects = false
+			rootObjectField = new ObjectField("Root") {
+				objectType = typeof(Object),
+				allowSceneObjects = true
 			};
-			_rootCategoryObjectField.RegisterValueChangedCallback(evt => {
-				if (_graphView != null) {
-					_graphView.LoadGraph(evt.newValue as BehaviourCategory);
-				}
-			});
-			toolbar.Add(_rootCategoryObjectField);
+			rootObjectField.style.minWidth = 320f;
+			rootObjectField.RegisterValueChangedCallback(evt => SetRootObject(evt.newValue));
+			toolbar.Add(rootObjectField);
 
-			var loadButton = new Button(() => {
-				if (_graphView != null) {
-					_graphView.LoadGraph(_rootCategoryObjectField.value as BehaviourCategory);
-				}
-			}) { text = "Load" };
-			toolbar.Add(loadButton);
+			toolbar.Add(new Button(() => SetRootObject(rootObjectField.value)) { text = "Reload" });
+			toolbar.Add(new Button(() => graphView.SaveGraph()) { text = "Save" });
 
-			var saveButton = new Button(() => {
-				if (_graphView != null) {
-					_graphView.SaveGraph();
-				}
-			}) { text = "Save" };
-			toolbar.Add(saveButton);
+			statusLabel = new Label();
+			statusLabel.style.marginLeft = 8f;
+			toolbar.Add(statusLabel);
 
 			rootVisualElement.Add(toolbar);
 
-			if (_graphView != null) {
-				rootVisualElement.Remove(_graphView);
+			graphView = new UtilityGraphView();
+			graphView.style.flexGrow = 1f;
+			rootVisualElement.Add(graphView);
+
+			if (Selection.activeObject is BehaviourCategory || Selection.activeObject is PrioritizationMachine || Selection.activeObject is GameObject) {
+				SetRootObject(Selection.activeObject);
+			} else if (Selection.activeGameObject != null) {
+				SetRootObject(Selection.activeGameObject);
+			} else {
+				SetStatus("PrioritizationMachine, BehaviourCategory, or a GameObject with PrioritizationMachine can be selected.");
 			}
-			_graphView = new UtilityGraphView();
-			_graphView.style.flexGrow = 1;
-			rootVisualElement.Add(_graphView);
+		}
+
+		private void SetRootObject(Object value) {
+			if (rootObjectField != null && rootObjectField.value != value) {
+				rootObjectField.SetValueWithoutNotify(value);
+			}
+
+			if (graphView == null) {
+				return;
+			}
+
+			var normalized = NormalizeRootObject(value);
+			graphView.LoadGraph(normalized);
+			SetStatus(normalized == null
+				? "Root must be PrioritizationMachine, BehaviourCategory, or a GameObject with PrioritizationMachine."
+				: $"Editing: {normalized.name}");
+		}
+
+		private static Object NormalizeRootObject(Object value) {
+			if (value is GameObject gameObject) {
+				return gameObject.GetComponent<PrioritizationMachine>();
+			}
+
+			if (value is PrioritizationMachine || value is BehaviourCategory) {
+				return value;
+			}
+
+			return null;
+		}
+
+		private void SetStatus(string message) {
+			if (statusLabel != null) {
+				statusLabel.text = message;
+			}
 		}
 	}
 }

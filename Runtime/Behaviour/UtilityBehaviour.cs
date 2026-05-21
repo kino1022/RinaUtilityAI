@@ -25,7 +25,7 @@ namespace RinaUtilityAI.Behaviour {
 
 	}
 
-	public abstract class AUtilityBehaviour : AUtilityNode {
+	public abstract class AUtilityBehaviour : AUtilityNode, IUtilityBehaviour {
 
 		public abstract int InterruptionPriority { get; }
 

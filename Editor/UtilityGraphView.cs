@@ -1,265 +1,563 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
-using UnityEditor;
-using UnityEditor.Experimental.GraphView;
-using UnityEngine;
-using UnityEngine.UIElements;
+using System.Linq;
+using System.Reflection;
 using RinaUtilityAI.Category;
 using RinaUtilityAI.Interface;
+using UnityEditor;
+using UnityEditor.Experimental.GraphView;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace RinaUtilityAI.Editor {
-    public class UtilityGraphView : GraphView {
+	public sealed class UtilityGraphView : GraphView {
 
-        private readonly Dictionary<AUtilityNode, UtilityNodeView> _nodeViewMap = new();
-        private readonly GridBackground _gridBackground;
-        private readonly GraphEdgeConnectorListener _edgeConnectorListener;
+		private const float NodeWidth = 260f;
+		private const float HorizontalSpacing = 340f;
+		private const float VerticalSpacing = 170f;
 
-        public UtilityGraphView() {
-            SetupZoom(ContentZoomer.DefaultMinScale, ContentZoomer.DefaultMaxScale);
-            this.AddManipulator(new ContentDragger());
-            this.AddManipulator(new SelectionDragger());
-            this.AddManipulator(new RectangleSelector());
+		private static readonly BindingFlags InstanceFieldFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+		private static readonly FieldInfo MachineNodesField = typeof(PrioritizationMachine).GetField("nodes", InstanceFieldFlags);
+		private static readonly FieldInfo CategoryChildrenField = typeof(BehaviourCategory).GetField("childNodes", InstanceFieldFlags);
 
-            _edgeConnectorListener = new GraphEdgeConnectorListener(this);
+		private readonly Dictionary<AUtilityNode, UtilityNodeView> nodeViewMap = new();
+		private readonly UtilityEdgeConnectorListener edgeConnectorListener;
+		private readonly GridBackground gridBackground;
+		private UtilityNodeView rootView;
+		private Object rootObject;
 
-            _gridBackground = new GridBackground();
-            Insert(0, _gridBackground);
-            _gridBackground.StretchToParentSize();
+		public UtilityGraphView() {
+			SetupZoom(ContentZoomer.DefaultMinScale, ContentZoomer.DefaultMaxScale);
+			this.AddManipulator(new ContentDragger());
+			this.AddManipulator(new SelectionDragger());
+			this.AddManipulator(new RectangleSelector());
 
-            style.flexGrow = 1;
-        }
+			edgeConnectorListener = new UtilityEdgeConnectorListener(this);
+			gridBackground = new GridBackground();
+			Insert(0, gridBackground);
+			gridBackground.StretchToParentSize();
 
-        public void LoadGraph(BehaviourCategory rootCategory) {
-            _rootCategory = rootCategory;
-            var elementsToRemove = new List<GraphElement>();
-            foreach (var element in graphElements) {
-                elementsToRemove.Add(element);
-            }
-            DeleteElements(elementsToRemove);
-            Insert(0, _gridBackground);
-            _gridBackground.StretchToParentSize();
-            _nodeViewMap.Clear();
+			style.flexGrow = 1;
+		}
 
-            if (rootCategory == null) return;
+		public void LoadGraph(Object newRootObject) {
+			rootObject = NormalizeRootObject(newRootObject);
+			ClearGraph();
 
-            GenerateNodesRecursive(rootCategory, new Vector2(100, 200));
+			if (rootObject == null) {
+				return;
+			}
 
-            ConnectEdgesRecursive(rootCategory);
-        }
+			if (rootObject is PrioritizationMachine machine) {
+				rootView = UtilityNodeView.CreateRootNode(machine, new Vector2(80f, 220f), edgeConnectorListener);
+				AddElement(rootView);
+				BuildTree(GetMachineRootNodes(machine), rootView, 220f, new HashSet<AUtilityNode>());
+			} else if (rootObject is BehaviourCategory category) {
+				var categoryView = CreateOrGetNodeView(category, new Vector2(80f, 220f));
+				rootView = categoryView;
+				BuildTree(GetCategoryChildren(category), categoryView, 220f, new HashSet<AUtilityNode> { category });
+			}
 
-        private BehaviourCategory _rootCategory;
+			FrameAllSoon();
+		}
 
-        private void GenerateNodesRecursive(AUtilityNode node, Vector2 position) {
-            if (node == null || _nodeViewMap.ContainsKey(node)) return;
+		public void SaveGraph() {
+			if (rootObject == null) {
+				Debug.LogWarning("【Utility AI】保存対象が選択されていません。");
+				return;
+			}
 
-            var nodeView = UtilityNodeView.CreateNode(node, position, _edgeConnectorListener);
-            AddElement(nodeView);
-            _nodeViewMap[node] = nodeView;
+			if (rootObject is PrioritizationMachine machine) {
+				SetMachineRootNodes(machine, GetConnectedChildren(rootView));
+				MarkChanged(machine);
+			}
 
-            if (node is IBehaviourCategory category && category.ChildNodes != null && category.ChildNodes.Count > 0) {
-                float childY = position.y - (category.ChildNodes.Count * 60f) / 2f;
-                foreach (var child in category.ChildNodes) {
-                    if (child is not AUtilityNode childNode) continue;
-                    GenerateNodesRecursive(childNode, new Vector2(position.x + 250f, childY));
-                    childY += 120f;
-                }
-            }
-        }
+			foreach (var pair in nodeViewMap) {
+				var category = pair.Key as BehaviourCategory;
+				if (category == null) {
+					continue;
+				}
 
-        private void ConnectEdgesRecursive(AUtilityNode node) {
-            if (node == null) return;
+				SetCategoryChildren(category, GetConnectedChildren(pair.Value));
+				MarkChanged(category);
+			}
 
-            if (node is not IBehaviourCategory category) return;
+			AssetDatabase.SaveAssets();
+			Debug.Log("【Utility AI】グラフを保存しました。");
+		}
 
-            if (_nodeViewMap.TryGetValue(node, out var parentView) && parentView.OutputPort != null) {
-                foreach (var child in category.ChildNodes) {
-                    if (child is not AUtilityNode childNode) continue;
-                    if (_nodeViewMap.TryGetValue(childNode, out var childView)) {
-                        var edge = parentView.OutputPort.ConnectTo(childView.InputPort);
-                        AddElement(edge);
-                    }
-                    ConnectEdgesRecursive(childNode);
-                }
-            }
-        }
+		public void ShowAddChildMenu(UtilityNodeView parentView, Vector2 position) {
+			if (parentView == null || !parentView.CanHaveChildren) {
+				return;
+			}
 
-        public void SaveGraph() {
-            foreach (var kvp in _nodeViewMap) {
-                var parentView = kvp.Value;
+			var menu = new GenericMenu();
+			menu.AddItem(new GUIContent("Add Existing Node..."), false, () => ShowExistingNodeSelectionMenu(parentView, position));
+			menu.AddItem(new GUIContent("Create Category"), false, () => CreateCategoryChild(parentView, position));
+			menu.DropDown(new Rect(position, Vector2.zero));
+		}
 
-                if (parentView.TargetNode is BehaviourCategory parentNode && parentView.OutputPort != null) {
-                  Undo.RecordObject(parentNode, "Update Utility AI Connections");
+		public void ShowExistingNodeSelectionMenu(UtilityNodeView parentView, Vector2 position) {
+			if (parentView == null || !parentView.CanHaveChildren) {
+				return;
+			}
 
-                    var serializedObj = new SerializedObject(parentNode);
-                    var childNodesProperty = serializedObj.FindProperty("childNodes");
-                    childNodesProperty.ClearArray();
+			var nodes = FindUtilityNodeAssets()
+				.Where(node => node != null)
+				.Where(node => node != parentView.TargetNode)
+				.OrderBy(node => node.GetType().Name)
+				.ThenBy(node => node.name)
+				.ToList();
 
-                    var connections = parentView.OutputPort.connections;
-                    int index = 0;
-                    foreach (var edge in connections) {
-                        if (edge.input.node is UtilityNodeView childView) {
-                            childNodesProperty.InsertArrayElementAtIndex(index);
-                            childNodesProperty.GetArrayElementAtIndex(index).objectReferenceValue = childView.TargetNode;
-                            index++;
-                        }
-                    }
+			var menu = new GenericMenu();
+			var added = false;
 
-                    serializedObj.ApplyModifiedProperties();
-                    EditorUtility.SetDirty(parentNode);
-                }
-            }
+			foreach (var node in nodes) {
+				var status = CanConnect(parentView, node) ? MenuStatus.Enabled : MenuStatus.Disabled;
+				var label = $"{node.GetType().Name}/{node.name}";
+				if (status == MenuStatus.Enabled) {
+					menu.AddItem(new GUIContent(label), false, () => AddChildVisual(parentView, node, position));
+				} else {
+					menu.AddDisabledItem(new GUIContent(label));
+				}
+				added = true;
+			}
 
-            AssetDatabase.SaveAssets();
-            Debug.Log("<color=green>【Utility AI】 グラフの保存が完了しました！</color>");
-        }
+			if (!added) {
+				menu.AddDisabledItem(new GUIContent("No AUtilityNode assets found"));
+			}
 
-        public void CreateChildCategory(BehaviourCategory parentCategory) {
-            if (parentCategory == null) return;
+			menu.DropDown(new Rect(position, Vector2.zero));
+		}
 
-            var childCategory = ScriptableObject.CreateInstance<BehaviourCategory>();
-            childCategory.name = "New BehaviourCategory";
+		public void CreateCategoryChild(UtilityNodeView parentView, Vector2 position) {
+			if (parentView == null || !parentView.CanHaveChildren) {
+				return;
+			}
 
-            var parentPath = AssetDatabase.GetAssetPath(parentCategory);
-            var folderPath = string.IsNullOrEmpty(parentPath) ? "Assets" : Path.GetDirectoryName(parentPath);
-            if (string.IsNullOrEmpty(folderPath)) {
-                folderPath = "Assets";
-            }
+			var category = ScriptableObject.CreateInstance<BehaviourCategory>();
+			category.name = "New BehaviourCategory";
 
-            var assetPath = AssetDatabase.GenerateUniqueAssetPath(Path.Combine(folderPath, childCategory.name + ".asset"));
+			var folderPath = GetCreationFolder();
+			var assetPath = AssetDatabase.GenerateUniqueAssetPath(Path.Combine(folderPath, category.name + ".asset"));
+			Undo.RegisterCreatedObjectUndo(category, "Create Utility AI Category");
+			AssetDatabase.CreateAsset(category, assetPath);
+			AssetDatabase.SaveAssets();
 
-            Undo.RegisterCreatedObjectUndo(childCategory, "Create BehaviourCategory");
-            AssetDatabase.CreateAsset(childCategory, assetPath);
-            AssetDatabase.SaveAssets();
+			AddChildVisual(parentView, category, position);
+			Selection.activeObject = category;
+			EditorGUIUtility.PingObject(category);
+		}
 
-            var serializedObj = new SerializedObject(parentCategory);
-            var childNodesProperty = serializedObj.FindProperty("childNodes");
-            var index = childNodesProperty.arraySize;
-            childNodesProperty.InsertArrayElementAtIndex(index);
-            childNodesProperty.GetArrayElementAtIndex(index).objectReferenceValue = childCategory;
-            serializedObj.ApplyModifiedProperties();
-            EditorUtility.SetDirty(parentCategory);
+		public void RegisterEdge(Edge edge) {
+			var parentView = edge?.output?.node as UtilityNodeView;
+			var childView = edge?.input?.node as UtilityNodeView;
+			if (parentView == null || childView == null) {
+				return;
+			}
 
-            LoadGraph(_rootCategory ?? parentCategory);
-            Selection.activeObject = childCategory;
-        }
+			if (!CanConnect(parentView, childView.TargetNode)) {
+				edge.output.Disconnect(edge);
+				edge.input.Disconnect(edge);
+				RemoveEdgeIfAttached(edge);
+				return;
+			}
 
-        public void BeginPickExistingChildNode(BehaviourCategory parentCategory) {
-            ShowExistingNodeSelectionMenu(parentCategory, Vector2.zero);
-        }
+			if (HasExistingEdge(parentView, childView, edge)) {
+				edge.output.Disconnect(edge);
+				edge.input.Disconnect(edge);
+				RemoveEdgeIfAttached(edge);
+				return;
+			}
 
-        public void AddExistingChildNode(BehaviourCategory parentCategory, AUtilityNode childNode) {
-            if (parentCategory == null || childNode == null) return;
+			if (edge.GetFirstAncestorOfType<GraphView>() == null) {
+				AddElement(edge);
+			}
+		}
 
-            var serializedObj = new SerializedObject(parentCategory);
-            var childNodesProperty = serializedObj.FindProperty("childNodes");
+		private void RemoveEdgeIfAttached(Edge edge) {
+			if (edge != null && edge.GetFirstAncestorOfType<GraphView>() != null) {
+				RemoveElement(edge);
+			}
+		}
 
-            for (var i = 0; i < childNodesProperty.arraySize; i++) {
-                if (childNodesProperty.GetArrayElementAtIndex(i).objectReferenceValue == childNode) {
-                    LoadGraph(_rootCategory ?? parentCategory);
-                    Selection.activeObject = childNode;
-                    return;
-                }
-            }
+		public override List<Port> GetCompatiblePorts(Port startPort, NodeAdapter nodeAdapter) {
+			var compatiblePorts = new List<Port>();
+			var startView = startPort?.node as UtilityNodeView;
+			if (startView == null) {
+				return compatiblePorts;
+			}
 
-            Undo.RecordObject(parentCategory, "Add Existing Child Node");
-            var index = childNodesProperty.arraySize;
-            childNodesProperty.InsertArrayElementAtIndex(index);
-            childNodesProperty.GetArrayElementAtIndex(index).objectReferenceValue = childNode;
-            serializedObj.ApplyModifiedProperties();
-            EditorUtility.SetDirty(parentCategory);
+			ports.ForEach(port => {
+				if (port == startPort || port.node == startPort.node || port.direction == startPort.direction) {
+					return;
+				}
 
-            LoadGraph(_rootCategory ?? parentCategory);
-            Selection.activeObject = childNode;
-        }
+				var outputView = startPort.direction == Direction.Output ? startView : port.node as UtilityNodeView;
+				var inputView = startPort.direction == Direction.Input ? startView : port.node as UtilityNodeView;
+				if (outputView == null || inputView == null) {
+					return;
+				}
 
-        public void ShowAddChildMenu(BehaviourCategory parentCategory, Vector2 position) {
-            if (parentCategory == null) return;
+				if (CanConnect(outputView, inputView.TargetNode)) {
+					compatiblePorts.Add(port);
+				}
+			});
 
-            var menu = new GenericMenu();
-            menu.AddItem(new GUIContent("Add Existing AUtilityNode..."), false, () => ShowExistingNodeSelectionMenu(parentCategory, position));
-            menu.AddItem(new GUIContent("Create New Category"), false, () => CreateChildCategory(parentCategory));
-            menu.DropDown(new Rect(position, Vector2.zero));
-        }
+			return compatiblePorts;
+		}
 
-        private void ShowExistingNodeSelectionMenu(BehaviourCategory parentCategory, Vector2 position) {
-            if (parentCategory == null) return;
+		public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
+			base.BuildContextualMenu(evt);
 
-            var menu = new GenericMenu();
-            var assetGuids = AssetDatabase.FindAssets("t:AUtilityNode");
-            var hasAnyItem = false;
+			var parentView = GetSelectedParentView() ?? rootView;
+			if (parentView == null || !parentView.CanHaveChildren) {
+				return;
+			}
 
-            foreach (var guid in assetGuids) {
-                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
-                var node = AssetDatabase.LoadAssetAtPath<AUtilityNode>(assetPath);
-                if (node == null || node == parentCategory) {
-                    continue;
-                }
+			evt.menu.AppendSeparator();
+			evt.menu.AppendAction("Add Existing Node...", _ => ShowExistingNodeSelectionMenu(parentView, evt.mousePosition));
+			evt.menu.AppendAction("Create Category", _ => CreateCategoryChild(parentView, evt.mousePosition));
+		}
 
-                hasAnyItem = true;
-                var label = string.IsNullOrEmpty(node.name) ? node.GetType().Name : node.name;
-                menu.AddItem(new GUIContent(label), false, () => AddExistingChildNode(parentCategory, node));
-            }
+		private void ClearGraph() {
+			var elements = graphElements.ToList();
+			DeleteElements(elements);
+			nodeViewMap.Clear();
+			rootView = null;
+			Insert(0, gridBackground);
+			gridBackground.StretchToParentSize();
+		}
 
-            if (!hasAnyItem) {
-                menu.AddDisabledItem(new GUIContent("No AUtilityNode assets found"));
-            }
+		private static Object NormalizeRootObject(Object value) {
+			if (value is GameObject gameObject) {
+				return gameObject.GetComponent<PrioritizationMachine>();
+			}
 
-            menu.DropDown(new Rect(position, Vector2.zero));
-        }
+			if (value is PrioritizationMachine || value is BehaviourCategory) {
+				return value;
+			}
 
-        private BehaviourCategory GetSelectedCategoryOrRoot() {
-            foreach (var selectable in selection) {
-                if (selectable is UtilityNodeView nodeView && nodeView.TargetNode is BehaviourCategory category) {
-                    return category;
-                }
-            }
-            return _rootCategory;
-        }
+			return null;
+		}
 
-        public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
-            base.BuildContextualMenu(evt);
+		private float BuildTree(IReadOnlyList<AUtilityNode> children, UtilityNodeView parentView, float startY, HashSet<AUtilityNode> ancestors) {
+			if (children == null || children.Count == 0) {
+				return startY + VerticalSpacing;
+			}
 
-            var targetCategory = GetSelectedCategoryOrRoot();
-            if (targetCategory != null) {
-                evt.menu.AppendAction("Add Existing AUtilityNode...", _ => ShowExistingNodeSelectionMenu(targetCategory, Vector2.zero));
-                evt.menu.AppendAction("Create New Category", _ => CreateChildCategory(targetCategory));
-            }
-        }
+			var parentPosition = parentView.GetPosition();
+			var childX = parentPosition.x + HorizontalSpacing;
+			var y = startY;
+			foreach (var child in children) {
+				if (child == null) {
+					continue;
+				}
 
-        public override List<Port> GetCompatiblePorts(Port startPort, NodeAdapter nodeAdapter) {
-            var compatiblePorts = new List<Port>();
-            ports.ForEach((port) => {
-                if (startPort != port && startPort.node != port.node && startPort.direction != port.direction) {
-                    compatiblePorts.Add(port);
-                }
-            });
-            return compatiblePorts;
-        }
+				if (ancestors.Contains(child)) {
+					Debug.LogWarning($"【Utility AI】循環参照を検出したため、{parentView.title} -> {child.name} の表示をスキップしました。");
+					y += VerticalSpacing;
+					continue;
+				}
 
-        private sealed class GraphEdgeConnectorListener : IEdgeConnectorListener {
+				var childView = CreateOrGetNodeView(child, new Vector2(childX, y));
+				ConnectViews(parentView, childView);
 
-            private readonly UtilityGraphView _graphView;
+				if (child is BehaviourCategory category && !ancestors.Contains(child)) {
+					var nextAncestors = new HashSet<AUtilityNode>(ancestors) { child };
+					var nextY = BuildTree(GetCategoryChildren(category), childView, y, nextAncestors);
+					var subtreeHeight = nextY - y;
+					childView.SetPosition(new Rect(childX, y + Mathf.Max(0f, subtreeHeight - VerticalSpacing) * 0.5f, NodeWidth, 130f));
+					y = nextY;
+				} else {
+					y += VerticalSpacing;
+				}
+			}
 
-            public GraphEdgeConnectorListener(UtilityGraphView graphView) {
-                _graphView = graphView;
-            }
+			return y;
+		}
 
-            public void OnDropOutsidePort(Edge edge, Vector2 position) {
-                if (edge?.output?.node is not UtilityNodeView sourceNodeView) {
-                    return;
-                }
+		private UtilityNodeView CreateOrGetNodeView(AUtilityNode node, Vector2 position) {
+			if (nodeViewMap.TryGetValue(node, out var existingView)) {
+				return existingView;
+			}
 
-                if (sourceNodeView.TargetNode is not BehaviourCategory parentCategory) {
-                    return;
-                }
+			var nodeView = UtilityNodeView.CreateUtilityNode(node, position, edgeConnectorListener);
+			AddElement(nodeView);
+			nodeViewMap[node] = nodeView;
+			return nodeView;
+		}
 
-                _graphView.ShowAddChildMenu(parentCategory, position);
-            }
+		private void AddChildVisual(UtilityNodeView parentView, AUtilityNode childNode, Vector2 position) {
+			if (!CanConnect(parentView, childNode)) {
+				return;
+			}
 
-            public void OnDrop(GraphView graphView, Edge edge) {
-                // 接続自体はGraphView側で保持されるため、
-                // データ同期はSaveGraph時にまとめて行う。
-            }
-        }
-    }
+			var graphPosition = this.ChangeCoordinatesTo(contentViewContainer, position);
+			if (float.IsNaN(graphPosition.x) || float.IsNaN(graphPosition.y) || graphPosition == Vector2.zero) {
+				var parentPosition = parentView.GetPosition();
+				graphPosition = new Vector2(parentPosition.x + HorizontalSpacing, parentPosition.y);
+			}
+
+			var childView = CreateOrGetNodeView(childNode, graphPosition);
+			ConnectViews(parentView, childView);
+
+			if (childNode is BehaviourCategory category) {
+				BuildTree(GetCategoryChildren(category), childView, graphPosition.y, new HashSet<AUtilityNode> { category });
+			}
+		}
+
+		private void ConnectViews(UtilityNodeView parentView, UtilityNodeView childView) {
+			if (parentView?.OutputPort == null || childView?.InputPort == null || HasExistingEdge(parentView, childView, null)) {
+				return;
+			}
+
+			var edge = parentView.OutputPort.ConnectTo(childView.InputPort);
+			AddElement(edge);
+		}
+
+		private bool CanConnect(UtilityNodeView parentView, AUtilityNode childNode) {
+			if (parentView == null || childNode == null || !parentView.CanHaveChildren) {
+				return false;
+			}
+
+			if (parentView.TargetNode == childNode) {
+				return false;
+			}
+
+			return parentView.IsGraphRoot || (!HasPath(childNode, parentView.TargetNode) && !HasSerializedPath(childNode, parentView.TargetNode, new HashSet<AUtilityNode>()));
+		}
+
+		private bool HasPath(AUtilityNode fromNode, AUtilityNode targetNode) {
+			if (fromNode == null || targetNode == null) {
+				return false;
+			}
+
+			if (fromNode == targetNode) {
+				return true;
+			}
+
+			if (!nodeViewMap.TryGetValue(fromNode, out var fromView) || fromView.OutputPort == null) {
+				return false;
+			}
+
+			foreach (var edge in fromView.OutputPort.connections) {
+				var childView = edge.input?.node as UtilityNodeView;
+				if (childView == null || childView.TargetNode == null) {
+					continue;
+				}
+
+				if (HasPath(childView.TargetNode, targetNode)) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static bool HasSerializedPath(AUtilityNode fromNode, AUtilityNode targetNode, HashSet<AUtilityNode> visited) {
+			if (fromNode == null || targetNode == null || !visited.Add(fromNode)) {
+				return false;
+			}
+
+			if (fromNode == targetNode) {
+				return true;
+			}
+
+			var category = fromNode as BehaviourCategory;
+			if (category == null) {
+				return false;
+			}
+
+			foreach (var child in GetCategoryChildren(category)) {
+				if (HasSerializedPath(child, targetNode, visited)) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private static bool HasExistingEdge(UtilityNodeView parentView, UtilityNodeView childView, Edge ignoredEdge) {
+			if (parentView?.OutputPort == null || childView?.InputPort == null) {
+				return false;
+			}
+
+			foreach (var edge in parentView.OutputPort.connections) {
+				if (edge == ignoredEdge) {
+					continue;
+				}
+
+				if (edge.input?.node == childView) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		private List<AUtilityNode> GetConnectedChildren(UtilityNodeView parentView) {
+			var result = new List<AUtilityNode>();
+			if (parentView?.OutputPort == null) {
+				return result;
+			}
+
+			var edges = parentView.OutputPort.connections
+				.Where(edge => edge.input?.node is UtilityNodeView)
+				.OrderBy(edge => ((UtilityNodeView)edge.input.node).GetPosition().y)
+				.ThenBy(edge => ((UtilityNodeView)edge.input.node).GetPosition().x);
+
+			foreach (var edge in edges) {
+				if (edge.input.node is UtilityNodeView childView && childView.TargetNode != null && !result.Contains(childView.TargetNode)) {
+					result.Add(childView.TargetNode);
+				}
+			}
+
+			return result;
+		}
+
+		private UtilityNodeView GetSelectedParentView() {
+			foreach (var item in selection) {
+				if (item is UtilityNodeView nodeView && nodeView.CanHaveChildren) {
+					return nodeView;
+				}
+			}
+
+			return null;
+		}
+
+		private static List<AUtilityNode> GetMachineRootNodes(PrioritizationMachine machine) {
+			var result = new List<AUtilityNode>();
+			if (machine == null || MachineNodesField == null) {
+				return result;
+			}
+
+			var values = MachineNodesField.GetValue(machine) as IEnumerable;
+			if (values == null) {
+				return result;
+			}
+
+			foreach (var value in values) {
+				if (value is AUtilityNode node) {
+					result.Add(node);
+				}
+			}
+
+			return result;
+		}
+
+		private static void SetMachineRootNodes(PrioritizationMachine machine, IReadOnlyList<AUtilityNode> nodes) {
+			if (machine == null || MachineNodesField == null) {
+				return;
+			}
+
+			Undo.RecordObject(machine, "Save Utility AI Graph");
+			var list = MachineNodesField.GetValue(machine) as List<IUtilityNode>;
+			if (list == null) {
+				list = new List<IUtilityNode>();
+				MachineNodesField.SetValue(machine, list);
+			}
+
+			list.Clear();
+			foreach (var node in nodes) {
+				list.Add(node);
+			}
+		}
+
+		private static List<AUtilityNode> GetCategoryChildren(BehaviourCategory category) {
+			if (category == null || CategoryChildrenField == null) {
+				return new List<AUtilityNode>();
+			}
+
+			return CategoryChildrenField.GetValue(category) as List<AUtilityNode> ?? new List<AUtilityNode>();
+		}
+
+		private static void SetCategoryChildren(BehaviourCategory category, IReadOnlyList<AUtilityNode> nodes) {
+			if (category == null || CategoryChildrenField == null) {
+				return;
+			}
+
+			Undo.RecordObject(category, "Save Utility AI Graph");
+			var list = CategoryChildrenField.GetValue(category) as List<AUtilityNode>;
+			if (list == null) {
+				list = new List<AUtilityNode>();
+				CategoryChildrenField.SetValue(category, list);
+			}
+
+			list.Clear();
+			list.AddRange(nodes);
+		}
+
+		private static IEnumerable<AUtilityNode> FindUtilityNodeAssets() {
+			var guids = AssetDatabase.FindAssets("t:ScriptableObject");
+			var emitted = new HashSet<AUtilityNode>();
+			foreach (var guid in guids) {
+				var path = AssetDatabase.GUIDToAssetPath(guid);
+				foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(path)) {
+					if (asset is AUtilityNode node && emitted.Add(node)) {
+						yield return node;
+					}
+				}
+			}
+		}
+
+		private string GetCreationFolder() {
+			if (Selection.activeObject != null) {
+				var selectedPath = AssetDatabase.GetAssetPath(Selection.activeObject);
+				if (!string.IsNullOrEmpty(selectedPath)) {
+					if (Directory.Exists(selectedPath)) {
+						return selectedPath;
+					}
+
+					var selectedFolder = Path.GetDirectoryName(selectedPath);
+					if (!string.IsNullOrEmpty(selectedFolder)) {
+						return selectedFolder;
+					}
+				}
+			}
+
+			if (rootObject != null) {
+				var rootPath = AssetDatabase.GetAssetPath(rootObject);
+				if (!string.IsNullOrEmpty(rootPath)) {
+					var rootFolder = Path.GetDirectoryName(rootPath);
+					if (!string.IsNullOrEmpty(rootFolder)) {
+						return rootFolder;
+					}
+				}
+			}
+
+			return "Assets";
+		}
+
+		private static void MarkChanged(Object target) {
+			if (target == null) {
+				return;
+			}
+
+			EditorUtility.SetDirty(target);
+			if (target is Component component) {
+				if (PrefabUtility.IsPartOfPrefabInstance(component)) {
+					PrefabUtility.RecordPrefabInstancePropertyModifications(component);
+				}
+				if (!EditorUtility.IsPersistent(component)) {
+					EditorSceneManager.MarkSceneDirty(component.gameObject.scene);
+				}
+			}
+		}
+
+		private void FrameAllSoon() {
+			schedule.Execute(() => {
+				if (panel != null) {
+					FrameAll();
+				}
+			}).ExecuteLater(50);
+		}
+
+		private enum MenuStatus {
+			Enabled,
+			Disabled
+		}
+	}
 }
