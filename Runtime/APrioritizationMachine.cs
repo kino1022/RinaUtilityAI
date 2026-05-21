@@ -56,6 +56,9 @@ namespace RinaUtilityAI {
 			defaultBehaviour = _resolver.Resolve<IDefaultBehaviourHolder>();
 			defaultBehaviour ??= gameObject.transform.root.GetComponentInChildren<IDefaultBehaviourHolder>();
 			Assert.IsNotNull(defaultBehaviour);
+			ownerReference = _resolver.Resolve<Func<IObjectResolver, UtilityOwnerReference>>()?.Invoke(_resolver);
+			ownerReference ??= new UtilityOwnerReference(gameObject, _resolver);
+			Assert.IsNotNull(ownerReference);
 			CreateNodeInstances();
 			InitializeNodeInstances();
 			EvaluateLoop_Async(this.GetCancellationTokenOnDestroy()).Forget();

@@ -111,7 +111,7 @@ namespace RinaUtilityAI.Category {
 				}
 				foreach (var node in category.ChildNodes) {
 					if (node != null) {
-										_childNodeInstances.Add(node.CreateInstance());
+						_childNodeInstances.Add(node.CreateInstance());
 					}
 				}
 			} else {

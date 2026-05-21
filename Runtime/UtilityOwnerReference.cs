@@ -10,5 +10,10 @@ namespace RinaUtilityAI {
 
 		public IObjectResolver Resolver;
 
+		[Inject]
+		public UtilityOwnerReference(GameObject ownerObject, IObjectResolver resolver) {
+			OwnerObject = ownerObject;
+		}
+
 	}
 }
