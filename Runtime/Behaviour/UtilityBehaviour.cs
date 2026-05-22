@@ -12,7 +12,6 @@ namespace RinaUtilityAI.Behaviour {
 		int InterruptionPriority { get; }
 
 		UniTask ExecuteBehaviour_Async(CancellationToken token, IUtilityBehaviourInstance instance);
-
 	}
 
 	public interface IUtilityBehaviourInstance : IUtilityNodeInstance, IEquatable<IUtilityBehaviourInstance> {

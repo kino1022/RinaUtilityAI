@@ -16,6 +16,10 @@ namespace RinaUtilityAI.Behaviour {
 	public class DefaultBehaviourHolder : SerializedMonoBehaviour, IDefaultBehaviourHolder {
 
 		[OdinSerialize]
+		private IUtilityBehaviour _defaultBehaviourDefinition;
+
+		[OdinSerialize]
+		[ReadOnly]
 		private IUtilityBehaviourInstance _defaultBehaviour;
 
 		public virtual IUtilityBehaviourInstance DefaultBehaviour => _defaultBehaviour;
@@ -34,10 +38,11 @@ namespace RinaUtilityAI.Behaviour {
 			Assert.IsNotNull(_resolver);
 			_ownerReference = _resolver.Resolve<Func<IObjectResolver,UtilityOwnerReference>>().Invoke(_resolver);
 			_ownerReference ??= new UtilityOwnerReference(gameObject, _resolver);
-			 Assert.IsNotNull(_ownerReference);
-			 if (_defaultBehaviour != null) {
-				 _defaultBehaviour.Initialize(_ownerReference);
-			 }
+			Assert.IsNotNull(_ownerReference);
+			Assert.IsNotNull(_defaultBehaviourDefinition);
+			_defaultBehaviour = _defaultBehaviourDefinition.CreateInstance() as IUtilityBehaviourInstance;
+			Assert.IsNotNull(_defaultBehaviour);
+			_defaultBehaviour.Initialize(_ownerReference);
 		}
 	}
 }
