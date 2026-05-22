@@ -11,6 +11,14 @@ namespace RinaUtilityAI {
 		public bool absoluteTrue;
 
 		public static PrioritizationScore operator +(PrioritizationScore a, PrioritizationScore b) {
+
+			if (a.absoluteFalse && b.absoluteTrue || a.absoluteTrue && b.absoluteFalse) {
+				return new PrioritizationScore() {
+					absoluteTrue = false,
+					absoluteFalse = true,
+				};
+			}
+
 			return new PrioritizationScore {
 				score = a.score + b.score,
 				absoluteFalse = a.absoluteFalse || b.absoluteFalse,
@@ -35,7 +43,13 @@ namespace RinaUtilityAI {
 		}
 
 		public static bool operator < (PrioritizationScore a, PrioritizationScore b) {
-			return !(a > b);
+			if (a.absoluteTrue != b.absoluteTrue) {
+				return !a.absoluteTrue && b.absoluteTrue;
+			}
+			if (a.absoluteFalse != b.absoluteFalse) {
+				return a.absoluteFalse && !b.absoluteFalse;
+			}
+			return a.score < b.score;
 		}
 
 	}

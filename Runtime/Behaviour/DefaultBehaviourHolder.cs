@@ -1,8 +1,8 @@
 using System;
-using NUnit.Framework;
 using Sirenix.OdinInspector;
 using Sirenix.Serialization;
 using UnityEngine;
+using UnityEngine.Assertions;
 using VContainer;
 
 namespace RinaUtilityAI.Behaviour {

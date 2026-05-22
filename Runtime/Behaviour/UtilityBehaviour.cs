@@ -19,7 +19,7 @@ namespace RinaUtilityAI.Behaviour {
 
 		new IUtilityBehaviour Definition { get; }
 
-		bool IsActive { get; }
+		bool IsActive { get; set; }
 
 		bool IsInterruptible { get; set; }
 
@@ -50,7 +50,10 @@ namespace RinaUtilityAI.Behaviour {
 		[LabelText("行動がアクティブであるかどうか")]
 		protected bool isActive = false;
 
-		public virtual bool IsActive => isActive;
+		public virtual bool IsActive {
+			get => isActive;
+			set => isActive = value;
+		}
 
 		[SerializeField]
 		[LabelText("割り込まれることを許容するかどうか")]

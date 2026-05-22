@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using NUnit.Framework;
 using RinaUtilityAI.Behaviour;
 using RinaUtilityAI.Logic;
 using Sirenix.OdinInspector;
 using Sirenix.Serialization;
 using UnityEngine;
+using UnityEngine.Assertions;
 
 namespace RinaUtilityAI.Interface {
 	/// <summary>
