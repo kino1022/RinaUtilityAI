@@ -1,4 +1,5 @@
 using RinaUtilityAI.Behaviour;
+using RinaUtilityAI.Executor;
 using Sirenix.OdinInspector;
 using Sirenix.Serialization;
 using UnityEngine.Assertions;
@@ -10,6 +11,9 @@ namespace RinaUtilityAI {
 
 		[OdinSerialize]
 		private IDefaultBehaviourHolder _defaultBehaviour;
+
+		[OdinSerialize]
+		private IUtilityBehaviourExecutor _behaviourExecutor;
 
 		public void Install(IContainerBuilder builder) {
 			Assert.IsNotNull(builder);
@@ -25,8 +29,13 @@ namespace RinaUtilityAI {
 			Assert.IsNotNull(_defaultBehaviour);
 			builder
 				.RegisterInstance(_defaultBehaviour)
-				.As<IUtilityBehaviourInstance>();
-			
+				.As<IDefaultBehaviourHolder>();
+
+			_behaviourExecutor ??= gameObject.GetComponentInChildren<IUtilityBehaviourExecutor>();
+			Assert.IsNotNull(_behaviourExecutor);
+			builder
+				.RegisterInstance(_behaviourExecutor)
+				.As<IUtilityBehaviourExecutor>();
 		}
 	}
 }
