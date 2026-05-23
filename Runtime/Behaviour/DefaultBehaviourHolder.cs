@@ -36,7 +36,11 @@ namespace RinaUtilityAI.Behaviour {
 
 		private void Start() {
 			Assert.IsNotNull(_resolver);
-			_ownerReference = _resolver.Resolve<Func<IObjectResolver,UtilityOwnerReference>>().Invoke(_resolver);
+			Func<IObjectResolver, UtilityOwnerReference> refFactory;
+			_resolver.TryResolve(out refFactory);
+			if (refFactory != null) {
+				_ownerReference = refFactory.Invoke(_resolver);
+			}
 			_ownerReference ??= new UtilityOwnerReference(gameObject, _resolver);
 			Assert.IsNotNull(_ownerReference);
 			Assert.IsNotNull(_defaultBehaviourDefinition);

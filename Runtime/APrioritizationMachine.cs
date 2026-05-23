@@ -63,8 +63,18 @@ namespace RinaUtilityAI {
 			}
 			ownerReference ??= new UtilityOwnerReference(gameObject, _resolver);
 			Assert.IsNotNull(ownerReference);
+			StartupMachine_Async(this.GetCancellationTokenOnDestroy()).Forget();
+		}
+
+		private async UniTask StartupMachine_Async(CancellationToken token) {
+			Assert.IsNotNull(behaviourExecutor);
 			CreateNodeInstances();
 			InitializeNodeInstances();
+			try {
+				await UniTask.WaitUntil(() => behaviourExecutor.CurrentBehaviour != null, cancellationToken: token);
+			} catch (OperationCanceledException) {
+				this.enabled = false;
+			}
 			EvaluateLoop_Async(this.GetCancellationTokenOnDestroy()).Forget();
 		}
 

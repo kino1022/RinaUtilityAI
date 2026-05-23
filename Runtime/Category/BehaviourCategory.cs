@@ -86,7 +86,8 @@ namespace RinaUtilityAI.Category {
 		protected override void OnPostInitialize() {
 			base.OnPostInitialize();
 			Assert.IsNotNull(OwnerRef);
-			_defaultBehaviour = OwnerRef.Resolver.Resolve<IDefaultBehaviourHolder>();
+			OwnerRef.Resolver.TryResolve(out _defaultBehaviour);
+			_defaultBehaviour ??= OwnerRef.OwnerObject.GetComponentInParent<IDefaultBehaviourHolder>();
 			InitializeChildNodeInstances();
 		}
 
@@ -102,7 +103,7 @@ namespace RinaUtilityAI.Category {
 			}
 		}
 
-		protected void InstanceChildNodes() {
+		private void InstanceChildNodes() {
 			Assert.IsNotNull(definition);
 			Assert.IsFalse(definition is IBehaviourCategory == false, "definition must be of type BehaviourCategory");
 			if (definition is IBehaviourCategory category) {
