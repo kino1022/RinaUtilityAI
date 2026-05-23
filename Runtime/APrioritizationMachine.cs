@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
-using NUnit.Framework;
 using RinaUtilityAI.Behaviour;
 using RinaUtilityAI.Executor;
 using RinaUtilityAI.Interface;
 using Sirenix.OdinInspector;
 using Sirenix.Serialization;
 using UnityEngine;
+using UnityEngine.Assertions;
 using VContainer;
 
 namespace RinaUtilityAI {
@@ -89,7 +89,8 @@ namespace RinaUtilityAI {
 			try {
 				while (!token.IsCancellationRequested) {
 					if (nodeInstances.Count == 0) {
-						await UniTask.Yield(token);
+						behaviourExecutor.TryExecuteBehaviour(defaultBehaviour.DefaultBehaviour);
+						await UniTask.Delay(TimeSpan.FromSeconds(evaluationInterval), cancellationToken: token);
 						continue;
 					}
 

@@ -67,7 +67,9 @@ namespace RinaUtilityAI.Executor {
 
 			} finally {
 				nextBehaviour.IsActive = false;
-				_currentBehaviour = null;
+				if (ReferenceEquals(_currentBehaviour, nextBehaviour)) {
+					_currentBehaviour = null;
+				}
 			}
 		}
 
